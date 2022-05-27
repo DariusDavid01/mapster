@@ -99,6 +99,22 @@ public struct Coordinate
     }
 }
 
+public enum GeographicType : byte
+{
+    highway,
+    river,
+    border,
+    populatedplace,
+    railway,
+    plain,
+    forest,
+    mountain,
+    desert,
+    water,
+    residential,
+    unknown
+}
+
 public enum GeometryType : byte
 {
     Polyline,

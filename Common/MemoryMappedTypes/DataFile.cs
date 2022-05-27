@@ -24,7 +24,7 @@ public readonly ref struct MapFeatureData
     public GeometryType Type { get; init; }
     public ReadOnlySpan<char> Label { get; init; }
     public ReadOnlySpan<Coordinate> Coordinates { get; init; }
-    public Dictionary<string, string> Properties { get; init; }
+    public GeographicType geographicType { get; init; }
 }
 
 /// <summary>
@@ -142,6 +142,49 @@ public unsafe class DataFile : IDisposable
         GetString(stringsOffset, charsOffset, i + 1, out value);
     }
 
+    public static bool ShouldBePopulatedPlace(Dictionary<String,String> properties, GeometryType geometryType)
+    {
+        // https://wiki.openstreetmap.org/wiki/Key:place
+        if (geometryType != GeometryType.Point)
+        {
+            return false;
+        }
+        foreach (var entry in properties)
+            if (entry.Key.StartsWith("place"))
+            {
+                if (entry.Value.StartsWith("city") || entry.Value.StartsWith("town") ||
+                    entry.Value.StartsWith("locality") || entry.Value.StartsWith("hamlet"))
+                {
+                    return true;
+                }
+            }
+        return false;
+    }
+
+    public static bool ShouldBeBorder(Dictionary<String, String> properties, GeometryType geometryType)
+    {
+        // https://wiki.openstreetmap.org/wiki/Key:admin_level
+        var foundBoundary = false;
+        var foundLevel = false;
+        foreach (var entry in properties)
+        {
+            if (entry.Key.StartsWith("boundary") && entry.Value.StartsWith("administrative"))
+            {
+                foundBoundary = true;
+            }
+            if (entry.Key.StartsWith("admin_level") && entry.Value == "2")
+            {
+                foundLevel = true;
+            }
+            if (foundBoundary && foundLevel)
+            {
+                break;
+            }
+        }
+
+        return foundBoundary && foundLevel;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     public void ForeachFeature(BoundingBox b, MapFeatureDelegate? action)
     {
@@ -188,13 +231,107 @@ public unsafe class DataFile : IDisposable
                         properties.Add(key.ToString(), value.ToString());
                     }
 
+                    GeographicType geographicType = GeographicType.unknown;
+                    if (properties.Any(p => p.Key == "highway" && MapFeature.HighwayTypes.Any(v => p.Value.StartsWith(v))))
+                    {
+                        geographicType = GeographicType.highway;
+                    }
+                    else if (properties.Any(p => p.Key.StartsWith("water")) && feature->GeometryType != GeometryType.Point)
+                    {
+                        geographicType = GeographicType.river;
+                    }
+                    else if (ShouldBeBorder(properties, feature->GeometryType))
+                    {
+                        geographicType = GeographicType.border;
+                    }
+                    else if (ShouldBePopulatedPlace(properties, feature->GeometryType))
+                    {
+                        geographicType = GeographicType.populatedplace;
+                    }
+                    else if (properties.Any(p => p.Key.StartsWith("railway")))
+                    {
+                        geographicType = GeographicType.railway;
+                    }
+                    else if (properties.Any(p => p.Key.StartsWith("natural") && feature->GeometryType == GeometryType.Polygon))
+                    {
+                        var naturalKey = properties.Where(p=>p.Key=="natural").First().Value;
+
+                        if (naturalKey == "fell" ||
+                            naturalKey == "grassland" ||
+                            naturalKey == "heath" ||
+                            naturalKey == "moor" ||
+                            naturalKey == "scrub" ||
+                            naturalKey == "wetland")
+                        {
+                            geographicType = GeographicType.plain;
+                        }
+                        else if (naturalKey == "wood" ||
+                                 naturalKey == "tree_row")
+                        {
+                            geographicType = GeographicType.forest;
+                        }
+                        else if (naturalKey == "bare_rock" ||
+                                 naturalKey == "rock" ||
+                                 naturalKey == "scree")
+                        {
+                            geographicType = GeographicType.mountain;
+                        }
+                        else if (naturalKey == "beach" ||
+                                 naturalKey == "sand")
+                        {
+                            geographicType = GeographicType.desert;
+                        }
+                        else if (naturalKey == "water")
+                        {
+                            geographicType = GeographicType.water;
+                        }
+                    }
+                    else if (properties.Any(p => p.Key.StartsWith("boundary") && p.Value.StartsWith("forest")))
+                    {
+                        geographicType = GeographicType.forest;
+                    }
+                    else if (properties.Any(p => p.Key.StartsWith("landuse") && (p.Value.StartsWith("forest") || p.Value.StartsWith("orchard"))))
+                    {
+                        geographicType = GeographicType.forest;
+                    }
+                    else if (feature->GeometryType == GeometryType.Polygon && properties.Any(p
+                                 => p.Key.StartsWith("landuse") && (p.Value.StartsWith("residential") || p.Value.StartsWith("cemetery") || p.Value.StartsWith("industrial") || p.Value.StartsWith("commercial") ||
+                                                                    p.Value.StartsWith("square") || p.Value.StartsWith("construction") || p.Value.StartsWith("military") || p.Value.StartsWith("quarry") ||
+                                                                    p.Value.StartsWith("brownfield"))))
+                    {
+                        geographicType = GeographicType.residential;
+                    }
+                    else if (feature->GeometryType == GeometryType.Polygon && properties.Any(p
+                                 => p.Key.StartsWith("landuse") && (p.Value.StartsWith("farm") || p.Value.StartsWith("meadow") || p.Value.StartsWith("grass") || p.Value.StartsWith("greenfield") ||
+                                                                    p.Value.StartsWith("recreation_ground") || p.Value.StartsWith("winter_sports") || p.Value.StartsWith("allotments"))))
+                    {
+                        geographicType = GeographicType.plain;
+                    }
+                    else if (feature->GeometryType == GeometryType.Polygon &&
+                             properties.Any(p => p.Key.StartsWith("landuse") && (p.Value.StartsWith("reservoir") || p.Value.StartsWith("basin"))))
+                    {
+                        geographicType = GeographicType.water;
+                    }
+                    else if (feature->GeometryType == GeometryType.Polygon && properties.Any(p => p.Key.StartsWith("building")))
+                    {
+                        geographicType = GeographicType.residential;
+                    }
+                    else if (feature->GeometryType == GeometryType.Polygon && properties.Any(p => p.Key.StartsWith("leisure")))
+                    {
+                        geographicType = GeographicType.residential;
+                    }
+                    else if (feature->GeometryType == GeometryType.Polygon && properties.Any(p => p.Key.StartsWith("amenity")))
+                    {
+                        geographicType = GeographicType.residential;
+                    }
+
                     if (!action(new MapFeatureData
                         {
                             Id = feature->Id,
                             Label = label,
                             Coordinates = coordinates,
                             Type = feature->GeometryType,
-                            Properties = properties
+                            geographicType = geographicType
                         }))
                     {
                         break;

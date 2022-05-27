@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "MapFeatureGenerator": {
+      "commandName": "Project",
+      "commandLineArgs": "-i C:\\Users\\Darius\\Documents\\GitHub\\mapster\\Tests\\TestCommon\\andorra-latest.osm.pbf -o C:\\Users\\Darius\\Documents\\GitHub\\mapster\\Tests\\TestCommon\\andorra.bin"
+    }
+  }
+}
